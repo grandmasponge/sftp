@@ -1,0 +1,18 @@
+[package]
+name = "sftp"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.86"
+async-trait = "0.1.80"
+env_logger = "0.11.3"
+log = "0.4.21"
+russh = "0.43.0"
+russh-sftp = "2.0.1"
+tokio = { version = "1.38.0", features = ["full"] }
+sea-orm = { version = "0.12", features = [ "sqlx-mysql", "runtime-tokio-native-tls", "macros" ] }
+myent = {path="myent"}
+serde = { version = "1.0.203", features = ["derive"] }
+serde_json = "1.0.117"
+russh-keys = "0.43.0"
