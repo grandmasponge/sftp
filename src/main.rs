@@ -8,7 +8,7 @@ use log::{error, info, LevelFilter};
 use russh::server::{Auth, Msg, Server as _, Session};
 use russh::{Channel, ChannelId};
 use russh_keys::key::KeyPair;
-use russh_sftp::protocol::{File, FileAttributes, Handle, Name, Status, StatusCode, Version};
+use russh_sftp::protocol::{File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
 use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::sync::Mutex;
 use sea_orm::entity::ColumnTrait;
@@ -56,7 +56,7 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
 
-        let db = Database::connect("mysql://root@localhost:3306/sftp").await?;
+        let db = Database::connect("mysql://toby@localhost:3306/sftp").await?;
         info!("connected to db");
 
         self.db = Some(Arc::new(db.clone()));
@@ -159,12 +159,96 @@ impl russh_sftp::server::Handler for SftpSession {
             error!("duplicate SSH_FXP_VERSION packet");
             return Err(StatusCode::ConnectionLost);
         }
-        let mount = self.mountpoint.clone().unwrap();
-        info!("{}", mount);
+        
 
         self.version = Some(version);
         info!("version: {:?}, extensions: {:?}", self.version, extensions);
         Ok(Version::new())
+    }
+
+    async fn write(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn open(
+        &mut self,
+        id: u32,
+        filename: String,
+        pflags: OpenFlags,
+        attrs: FileAttributes,
+    ) -> Result<Handle, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn extended(
+        &mut self,
+        id: u32,
+        request: String,
+        data: Vec<u8>,
+    ) -> Result<Packet, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn symlink(
+        &mut self,
+        id: u32,
+        linkpath: String,
+        targetpath: String,
+    ) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn rename(
+        &mut self,
+        id: u32,
+        oldpath: String,
+        newpath: String,
+    ) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn mkdir(
+        &mut self,
+        id: u32,
+        path: String,
+        attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        Err(self.unimplemented())
+    }
+
+    async fn setstat(
+        &mut self,
+        id: u32,
+        path: String,
+        attrs: FileAttributes,
+    ) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
     }
 
     async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
@@ -180,6 +264,10 @@ impl russh_sftp::server::Handler for SftpSession {
         info!("opendir: {}", path);
         self.root_dir_read_done = false;
         Ok(Handle { id, handle: path })
+    }
+
+    async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
+        Err(self.unimplemented())
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
