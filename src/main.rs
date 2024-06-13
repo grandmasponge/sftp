@@ -7,8 +7,8 @@ use async_trait::async_trait;
 use log::{error, info, LevelFilter};
 use russh::server::{Auth, Msg, Server as _, Session};
 use russh::{Channel, ChannelId};
-use russh_keys::key::KeyPair;
-use russh_sftp::protocol::{File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
+use russh_keys::key::{self, KeyPair};
+use russh_sftp::protocol::{Attrs, File, FileAttributes, Handle, Name, OpenFlags, Packet, Status, StatusCode, Version};
 use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::sync::Mutex;
 use sea_orm::entity::ColumnTrait;
@@ -56,7 +56,7 @@ impl russh::server::Handler for SshSession {
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
 
-        let db = Database::connect("mysql://toby@localhost:3306/sftp").await?;
+        let db = Database::connect("mysql://root@localhost:3306/sftp").await?;
         info!("connected to db");
 
         self.db = Some(Arc::new(db.clone()));
@@ -89,8 +89,49 @@ impl russh::server::Handler for SshSession {
         Ok(Auth::Reject { proceed_with_methods: None })
     }
 
+    async fn auth_publickey(
+        &mut self,
+        user: &str,
+        public_key: &key::PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        info!("auth_publickey: {} with key {:?}", user, public_key);
 
+        let db = Database::connect("mysql://root@localhost:3306/sftp")
+            .await?;
+        info!("connected to db");
 
+        self.db = Some(Arc::new(db.clone()));
+
+        let user = SftpEntity::find()
+        .filter(myent::sftp::Column::Username.eq(user))
+        .one(&db)
+        .await?;
+
+        let user = match user {
+            Some(user) => user,
+            None => {
+                info!("user not found");
+                return Ok(Auth::Reject { proceed_with_methods: None });
+            }
+        };
+
+        let pubkey = user.keys;
+
+        match pubkey {
+            Some(pubkey) => {
+                println!("pubkey: {:?}", pubkey);
+
+                return Ok(Auth::Accept)
+            },
+            None => {
+                info!("public key not set");
+                return Ok(Auth::Reject { proceed_with_methods: None });
+            }
+        }
+
+    }
+   
+   
     async fn channel_open_session(
         &mut self,
         channel: Channel<Msg>,
@@ -311,6 +352,7 @@ async fn main() {
     env_logger::builder()
         .filter_level(LevelFilter::Debug)
         .init();
+    
 
     let config = russh::server::Config {
         auth_rejection_time: Duration::from_secs(3),

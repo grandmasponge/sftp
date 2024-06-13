@@ -2425,6 +2425,7 @@ dependencies = [
  "env_logger",
  "log",
  "myent",
+ "openssl",
  "russh",
  "russh-keys",
  "russh-sftp",
