@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,6 +9,7 @@ use log::{error, info, LevelFilter};
 use russh::server::{Auth, Msg, Server as _, Session};
 use russh::{Channel, ChannelId};
 use russh_keys::key::{self, KeyPair};
+use russh_keys::PublicKeyBase64;
 use russh_sftp::protocol::{Attrs, File, FileAttributes, Handle, Name, OpenFlags, Packet, Status, StatusCode, Version};
 use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::sync::Mutex;
@@ -119,7 +121,8 @@ impl russh::server::Handler for SshSession {
 
         match pubkey {
             Some(pubkey) => {
-                println!("pubkey: {:?}", pubkey);
+                info!("pubkey: {:?}", pubkey.as_object());
+                
 
                 return Ok(Auth::Accept)
             },
@@ -154,7 +157,7 @@ impl russh::server::Handler for SshSession {
         
         if name == "sftp" {
             let channel = self.get_channel(channel_id).await;
-            let sftp = SftpSession::new(self.mountpoint.clone().unwrap());
+            let sftp = SftpSession::new("mountpoints/u1".to_string());
             
             session.channel_success(channel_id);
             russh_sftp::server::run(channel.into_stream(), sftp).await;
@@ -171,6 +174,8 @@ struct SftpSession {
     version: Option<u32>,
     mountpoint: Option<String>,
     root_dir_read_done: bool,
+    rootdir: bool,
+    handles: Arc<Mutex<HashMap<String, File>>>
 }
 
 impl SftpSession {
@@ -179,6 +184,8 @@ impl SftpSession {
             version: None,
             mountpoint: Some(mountpoint),
             root_dir_read_done: false,
+            rootdir: false,
+            handles: Arc::new(Mutex::new(HashMap::new()))
         }
     }
 }
@@ -224,12 +231,16 @@ impl russh_sftp::server::Handler for SftpSession {
         pflags: OpenFlags,
         attrs: FileAttributes,
     ) -> Result<Handle, Self::Error> {
-        Err(self.unimplemented())
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let path = format!("{}{}", mountpoint, filename);
+        info!("open: {}", path);
+        let handle = path.clone();
+        
+    
+
+        Ok(Handle { id, handle })
     }
 
-    async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        Err(self.unimplemented())
-    }
 
     async fn extended(
         &mut self,
@@ -240,17 +251,26 @@ impl russh_sftp::server::Handler for SftpSession {
         Err(self.unimplemented())
     }
 
-    async fn symlink(
-        &mut self,
-        id: u32,
-        linkpath: String,
-        targetpath: String,
-    ) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
-    }
+   
 
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
-        Err(self.unimplemented())
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let path = format!("./{}/{}", mountpoint, path);
+        info!("stat: {}", path);
+        let path = Path::new(path.as_str());
+        let metadata = path.metadata().unwrap();
+        let mut attrs = FileAttributes::default();
+        let ftype = metadata.file_type();
+
+        if ftype.is_dir() {
+            attrs.set_dir(true);
+        } else if ftype.is_file() {
+            attrs.set_regular(true);
+        } else if ftype.is_symlink() {
+            attrs.set_symlink(true);
+        }
+
+        Ok(Attrs { id, attrs })
     }
 
     async fn rename(
@@ -259,7 +279,19 @@ impl russh_sftp::server::Handler for SftpSession {
         oldpath: String,
         newpath: String,
     ) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
+        info!("rename: {} to {}", oldpath, newpath);
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let oldpath = format!("./{}/{}", mountpoint, oldpath);
+        let newpath = format!("./{}/{}", mountpoint, newpath);
+        std::fs::rename(oldpath, newpath).unwrap();
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-UK".to_string(),
+        })
+
     }
 
     async fn mkdir(
@@ -268,7 +300,17 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let path = format!("./{}/{}", mountpoint, path);
+        info!("mkdir: {}", path);
+        std::fs::create_dir(path).unwrap();
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-UK".to_string(),
+        })
     }
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
@@ -276,10 +318,6 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
-        Err(self.unimplemented())
-    }
-
-    async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         Err(self.unimplemented())
     }
 
@@ -304,42 +342,71 @@ impl russh_sftp::server::Handler for SftpSession {
     async fn opendir(&mut self, id: u32, path: String) -> Result<Handle, Self::Error> {
         info!("opendir: {}", path);
         self.root_dir_read_done = false;
+       
         Ok(Handle { id, handle: path })
     }
 
     async fn rmdir(&mut self, id: u32, path: String) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let path = format!("./{}/{}", mountpoint, path);
+        info!("rmdir: {}", path);
+        std::fs::remove_dir(path).unwrap();
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-UK".to_string(),
+        })
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
-        info!("readdir handle: {}", handle);
-        if handle == "/" && !self.root_dir_read_done {
+       
+        if !self.root_dir_read_done {
+            let mountpoint = self.mountpoint.clone().unwrap();
+            let path = format!("./{}{}", mountpoint, handle);
+            info!("readdir: {}", path);
+            let path = Path::new(path.as_str());
+            let mut files = vec![];
+
+            for entry in path.read_dir().unwrap() {
+                let entry = entry.unwrap();
+                let filename = entry.file_name().to_str().unwrap().to_string();
+                let longname = filename.clone();
+                let mut attrs = FileAttributes::default();
+                let ftype = entry.file_type().unwrap();
+                
+                if ftype.is_dir() {
+                    attrs.set_dir(true);
+                } else if ftype.is_file() {
+                    attrs.set_regular(true);
+                } else if ftype.is_symlink() {
+                    attrs.set_symlink(true);
+                }
+            
+                files.push(File {
+                    filename,
+                    longname,
+                    attrs,
+                });
+            }
             self.root_dir_read_done = true;
-            return Ok(Name {
-                id,
-                files: vec![
-                    File {
-                        filename: "foo".to_string(),
-                        longname: "".to_string(),
-                        attrs: FileAttributes::default(),
-                    },
-                    File {
-                        filename: "bar".to_string(),
-                        longname: "".to_string(),
-                        attrs: FileAttributes::default(),
-                    },
-                ],
-            });
+            Ok(Name { id, files })
+
+        } else {
+            Err(StatusCode::Eof)
         }
-        Ok(Name { id, files: vec![] })
+
     }
+        
+    
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         info!("realpath: {}", path);
+        let path = format!("/{}", path);
         Ok(Name {
             id,
             files: vec![File {
-                filename: "/".to_string(),
+                filename: path.to_string(),
                 longname: "".to_string(),
                 attrs: FileAttributes::default(),
             }],
