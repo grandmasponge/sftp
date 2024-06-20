@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::{fs, path};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
@@ -10,12 +11,14 @@ use russh::server::{Auth, Msg, Server as _, Session};
 use russh::{Channel, ChannelId};
 use russh_keys::key::{self, KeyPair};
 use russh_keys::PublicKeyBase64;
-use russh_sftp::protocol::{Attrs, File, FileAttributes, Handle, Name, OpenFlags, Packet, Status, StatusCode, Version};
+use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Packet, Status, StatusCode, Version};
 use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
 use tokio::sync::Mutex;
 use sea_orm::entity::ColumnTrait;
 
 use myent::sftp::Entity as SftpEntity;
+
+
 
 #[derive(Clone)]
 struct Server;
@@ -174,8 +177,8 @@ struct SftpSession {
     version: Option<u32>,
     mountpoint: Option<String>,
     root_dir_read_done: bool,
-    rootdir: bool,
-    handles: Arc<Mutex<HashMap<String, File>>>
+    pwd: String,
+    handles: Arc<Mutex<HashMap<String, fs::File>>>
 }
 
 impl SftpSession {
@@ -184,7 +187,7 @@ impl SftpSession {
             version: None,
             mountpoint: Some(mountpoint),
             root_dir_read_done: false,
-            rootdir: false,
+            pwd: "/".to_string(),
             handles: Arc::new(Mutex::new(HashMap::new()))
         }
     }
@@ -214,6 +217,19 @@ impl russh_sftp::server::Handler for SftpSession {
         Ok(Version::new())
     }
 
+    async fn read(
+        &mut self,
+        id: u32,
+        handle: String,
+        offset: u64,
+        len: u32,
+    ) -> Result<Data, Self::Error> {
+        info!("read: {}", handle);
+        let data = "Hello, World!".as_bytes().to_vec();
+
+        Ok(Data { id, data })
+    }
+
     async fn write(
         &mut self,
         id: u32,
@@ -234,11 +250,25 @@ impl russh_sftp::server::Handler for SftpSession {
         let mountpoint = self.mountpoint.clone().unwrap();
         let path = format!("{}{}", mountpoint, filename);
         info!("open: {}", path);
-        let handle = path.clone();
+        let mut options = std::fs::OpenOptions::new();
+        let flags = pflags.bits();
+        let handle = options.read((flags & 0x01) != 0)
+            .write((flags & 0x02) != 0)
+            .create((flags & 0x08) != 0)
+            .truncate((flags & 0x10) != 0)
+            .open(path)
+            .unwrap();
+        {
+            
+            let mut handles = self.handles.lock().await;
+            handles.insert(filename.clone(), handle);
+            
+        }
         
-    
+        let handle = filename.clone();
+        let wha: u32 = 0345;
 
-        Ok(Handle { id, handle })
+        Ok(Handle { id: wha, handle: "/haha/tehe.txt".to_string() })
     }
 
 
@@ -330,6 +360,8 @@ impl russh_sftp::server::Handler for SftpSession {
         Err(self.unimplemented())
     }
 
+
+
     async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
         Ok(Status {
             id,
@@ -360,10 +392,10 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn readdir(&mut self, id: u32, handle: String) -> Result<Name, Self::Error> {
-       
+       info!("readdir handle: {}", handle);
         if !self.root_dir_read_done {
             let mountpoint = self.mountpoint.clone().unwrap();
-            let path = format!("./{}{}", mountpoint, handle);
+            let path = format!("./{}/{}", mountpoint, handle);
             info!("readdir: {}", path);
             let path = Path::new(path.as_str());
             let mut files = vec![];
@@ -372,7 +404,8 @@ impl russh_sftp::server::Handler for SftpSession {
                 let entry = entry.unwrap();
                 let filename = entry.file_name().to_str().unwrap().to_string();
                 let longname = filename.clone();
-                let mut attrs = FileAttributes::default();
+                let metadata = entry.metadata().unwrap();
+                let mut attrs = FileAttributes::from(&metadata);
                 let ftype = entry.file_type().unwrap();
                 
                 if ftype.is_dir() {
@@ -402,7 +435,30 @@ impl russh_sftp::server::Handler for SftpSession {
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         info!("realpath: {}", path);
-        let path = format!("/{}", path);
+
+        let mut path = match path.as_str() {
+            "." => "/".to_string(),
+            "" => "/".to_string(),
+            _ => path,
+        };
+
+        while path.contains("..") {
+            
+            let mut parts: Vec<&str> = path.split("/").collect();
+            let mut new_parts: Vec<&str> = vec![];
+            let mut i = 0;
+            while i < parts.len() {
+                if parts[i] == ".." {
+                    new_parts.pop();
+                } else {
+                    new_parts.push(parts[i]);
+                }
+                i += 1;
+            }
+            path = new_parts.join("/");
+        }
+        
+       
         Ok(Name {
             id,
             files: vec![File {
