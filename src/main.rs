@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::{fs, path};
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -13,7 +13,6 @@ use russh_keys::key::{self, KeyPair};
 use russh_keys::PublicKeyBase64;
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Packet, Status, StatusCode, Version};
 use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
-use tokio::sync::Mutex;
 use sea_orm::entity::ColumnTrait;
 
 use myent::sftp::Entity as SftpEntity;
@@ -50,7 +49,7 @@ impl Default for SshSession {
 
 impl SshSession {
     pub async fn get_channel(&mut self, channel_id: ChannelId) -> Channel<Msg> {
-        let mut clients = self.clients.lock().await;
+        let mut clients = self.clients.lock().unwrap();
         clients.remove(&channel_id).unwrap()
     }
 }
@@ -144,7 +143,7 @@ impl russh::server::Handler for SshSession {
         _session: &mut Session,
     ) -> Result<bool, Self::Error> {
         {
-            let mut clients = self.clients.lock().await;
+            let mut clients = self.clients.lock().unwrap();
             clients.insert(channel.id(), channel);
         }
         Ok(true)
@@ -227,7 +226,7 @@ impl russh_sftp::server::Handler for SftpSession {
         info!("read: {}", handle);
         let data = "Hello, World!".as_bytes().to_vec();
 
-        Ok(Data { id, data })
+        Ok(Data { id: 8374, data })
     }
 
     async fn write(
@@ -237,6 +236,7 @@ impl russh_sftp::server::Handler for SftpSession {
         offset: u64,
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
+        info!("write: {}", handle);
         Err(self.unimplemented())
     }
 
@@ -250,24 +250,20 @@ impl russh_sftp::server::Handler for SftpSession {
         let mountpoint = self.mountpoint.clone().unwrap();
         let path = format!("{}{}", mountpoint, filename);
         info!("open: {}", path);
-        let mut options = std::fs::OpenOptions::new();
-        let flags = pflags.bits();
-        let handle = options.read((flags & 0x01) != 0)
-            .write((flags & 0x02) != 0)
-            .create((flags & 0x08) != 0)
-            .truncate((flags & 0x10) != 0)
-            .open(path)
-            .unwrap();
-        {
-            
-            let mut handles = self.handles.lock().await;
-            handles.insert(filename.clone(), handle);
-            
-        }
+        let mut file = std::fs::OpenOptions::from(pflags)
+        .open(path)
+        .unwrap();
+
+        let mut handles = self.handles.lock()
+        .unwrap();
+        handles.insert(filename.clone(), file);
+
+        drop(handles);
         
         let handle = filename.clone();
         let wha: u32 = 0345;
 
+        info!("handle: {}", handle);
         Ok(Handle { id: wha, handle: "/haha/tehe.txt".to_string() })
     }
 
@@ -348,7 +344,13 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
-        Err(self.unimplemented())
+        info!("fstat: {}", handle);
+
+
+        Ok(Attrs {
+            id,
+            attrs: FileAttributes::default(),
+        })
     }
 
     async fn setstat(
@@ -357,6 +359,7 @@ impl russh_sftp::server::Handler for SftpSession {
         path: String,
         attrs: FileAttributes,
     ) -> Result<Status, Self::Error> {
+        info!("setstat: {}", path);
         Err(self.unimplemented())
     }
 
