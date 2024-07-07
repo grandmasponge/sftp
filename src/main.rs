@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io::{Read, Write};
 use std::{fs, path};
 use std::net::SocketAddr;
 use std::path::Path;
@@ -16,6 +17,7 @@ use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
 use sea_orm::entity::ColumnTrait;
 
 use myent::sftp::Entity as SftpEntity;
+use tokio::io::AsyncWriteExt;
 
 
 
@@ -177,6 +179,7 @@ struct SftpSession {
     mountpoint: Option<String>,
     root_dir_read_done: bool,
     pwd: String,
+    test: bool,
     handles: Arc<Mutex<HashMap<String, fs::File>>>
 }
 
@@ -187,6 +190,7 @@ impl SftpSession {
             mountpoint: Some(mountpoint),
             root_dir_read_done: false,
             pwd: "/".to_string(),
+            test: false,
             handles: Arc::new(Mutex::new(HashMap::new()))
         }
     }
@@ -224,10 +228,23 @@ impl russh_sftp::server::Handler for SftpSession {
         len: u32,
     ) -> Result<Data, Self::Error> {
         info!("read: {}", handle);
-        let data = "Hello, World!".as_bytes().to_vec();
+        println!("len: {len}");
+        println!("off: {offset}");
 
-        Ok(Data { id: 8374, data })
+            self.test = true;
+            let mut buf: [u8; 1024] = [0; 1024];
+            let mut file = std::fs::File::open("./mountpoints/u1/haha/tehe.txt")
+            .unwrap();
+            let res = file.read(&mut buf)
+            .unwrap();
+
+            println!("{res}");
+            println!("{buf:?}");
+           return  Ok(Data { id, data: buf.to_vec() });
+
     }
+
+    async 
 
     async fn write(
         &mut self,
@@ -237,7 +254,21 @@ impl russh_sftp::server::Handler for SftpSession {
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
         info!("write: {}", handle);
-        Err(self.unimplemented())
+        //test
+        let mut file = tokio::fs::File::create("./mountpoints/u1/write.txt")
+        .await
+        .unwrap();
+        //test over
+        let res = file.write_all(&data)
+        .await
+        .unwrap();
+        
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-UK".to_string(),
+        })
     }
 
     async fn open(
@@ -251,7 +282,7 @@ impl russh_sftp::server::Handler for SftpSession {
         let path = format!("{}{}", mountpoint, filename);
         info!("open: {}", path);
         let mut file = std::fs::OpenOptions::from(pflags)
-        .open(path)
+        .open("./mountpoints/u1/haha/tehe.txt")
         .unwrap();
 
         let mut handles = self.handles.lock()
@@ -264,9 +295,33 @@ impl russh_sftp::server::Handler for SftpSession {
         let wha: u32 = 0345;
 
         info!("handle: {}", handle);
-        Ok(Handle { id: wha, handle: "/haha/tehe.txt".to_string() })
+        Ok(Handle { id, handle })
     }
 
+    async fn lstat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let path = format!("./{}{}", mountpoint, path);
+        info!("stat: {}", path);
+        let path = Path::new(path.as_str());
+        let metadata = match path.metadata() {
+            Ok(data) => {
+                info!("is dir");
+                data
+            },
+            Err(_e) => {
+                info!("is file");
+                let file = std::fs::File::open("./mountpoints/u1/haha/tehe.txt")
+                .unwrap();
+
+                let data = file.metadata()
+                .unwrap();
+                data
+            }
+        };
+        let attrs = FileAttributes::from(&metadata);
+
+        Ok(Attrs { id, attrs })
+    }
 
     async fn extended(
         &mut self,
@@ -274,6 +329,7 @@ impl russh_sftp::server::Handler for SftpSession {
         request: String,
         data: Vec<u8>,
     ) -> Result<Packet, Self::Error> {
+        println!("what ever this is");
         Err(self.unimplemented())
     }
 
@@ -281,20 +337,25 @@ impl russh_sftp::server::Handler for SftpSession {
 
     async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
         let mountpoint = self.mountpoint.clone().unwrap();
-        let path = format!("./{}/{}", mountpoint, path);
+        let path = format!("./{}{}", mountpoint, path);
         info!("stat: {}", path);
         let path = Path::new(path.as_str());
-        let metadata = path.metadata().unwrap();
-        let mut attrs = FileAttributes::default();
-        let ftype = metadata.file_type();
+        let metadata = match path.metadata() {
+            Ok(data) => {
+                info!("is dir");
+                data
+            },
+            Err(_e) => {
+                info!("is file");
+                let file = std::fs::File::open("./mountpoints/u1/haha/tehe.txt")
+                .unwrap();
 
-        if ftype.is_dir() {
-            attrs.set_dir(true);
-        } else if ftype.is_file() {
-            attrs.set_regular(true);
-        } else if ftype.is_symlink() {
-            attrs.set_symlink(true);
-        }
+                let data = file.metadata()
+                .unwrap();
+                data
+            }
+        };
+        let attrs = FileAttributes::from(&metadata);
 
         Ok(Attrs { id, attrs })
     }
@@ -345,11 +406,18 @@ impl russh_sftp::server::Handler for SftpSession {
 
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
         info!("fstat: {}", handle);
+        let file = std::fs::File::open("./mountpoints/u1/haha/tehe.txt")
+        .unwrap();
 
+        let metadata = file
+        .metadata()
+        .unwrap();
+
+        let attrs = FileAttributes::from(&metadata);
 
         Ok(Attrs {
             id,
-            attrs: FileAttributes::default(),
+            attrs
         })
     }
 
@@ -366,6 +434,7 @@ impl russh_sftp::server::Handler for SftpSession {
 
 
     async fn close(&mut self, id: u32, _handle: String) -> Result<Status, Self::Error> {
+        info!("closing file");
         Ok(Status {
             id,
             status_code: StatusCode::Ok,
@@ -473,17 +542,27 @@ impl russh_sftp::server::Handler for SftpSession {
     }
 }
 
+fn loadpubkey(path: String) -> KeyPair {
+    let private = russh_keys::load_secret_key(path, None)
+    .unwrap();
+
+    private
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::builder()
         .filter_level(LevelFilter::Debug)
         .init();
+
+    let keypath = "./keys/id_ed".to_string();
+    let key = loadpubkey(keypath);
     
 
     let config = russh::server::Config {
         auth_rejection_time: Duration::from_secs(3),
         auth_rejection_time_initial: Some(Duration::from_secs(0)),
-        keys: vec![KeyPair::generate_ed25519().unwrap()],
+        keys: vec![key],
         ..Default::default()
     };
 
