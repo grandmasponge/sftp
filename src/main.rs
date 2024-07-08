@@ -179,8 +179,6 @@ struct SftpSession {
     version: Option<u32>,
     mountpoint: Option<String>,
     root_dir_read_done: bool,
-    pwd: String,
-    test: bool,
     handles: Arc<Mutex<HashMap<String, fs::File>>>
 }
 
@@ -190,8 +188,6 @@ impl SftpSession {
             version: None,
             mountpoint: Some(mountpoint),
             root_dir_read_done: false,
-            pwd: "/".to_string(),
-            test: false,
             handles: Arc::new(Mutex::new(HashMap::new()))
         }
     }
@@ -246,12 +242,6 @@ impl russh_sftp::server::Handler for SftpSession {
            return  Ok(Data { id, data: buf.to_vec() });
 
     }
-
-    async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
-        info!("readlink {}", path);
-        Err(self.unimplemented())
-    }
-    ///iMovie.app/Contents/Frameworks/ProAppsFxSupport.framework/Modules
 
     async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
 
@@ -533,44 +523,65 @@ impl russh_sftp::server::Handler for SftpSession {
         }
 
     }
-        
-    
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
         info!("realpath: {}", path);
-
+    
         let mut path = match path.as_str() {
             "." => "/".to_string(),
             "" => "/".to_string(),
             _ => path,
         };
-
-        while path.contains("..") {
-            
-            let mut parts: Vec<&str> = path.split("/").collect();
-            let mut new_parts: Vec<&str> = vec![];
-            let mut i = 0;
-            while i < parts.len() {
-                if parts[i] == ".." {
-                    new_parts.pop();
-                } else {
-                    new_parts.push(parts[i]);
-                }
-                i += 1;
-            }
-            path = new_parts.join("/");
-        }
         
-       
+        if path.is_empty() {
+            path = "/".to_string();
+        }
+    
+        info!("path: {}", path);
+    
+        while path.contains("..") {
+            let parts: Vec<&str> = path.split('/').collect();
+            let mut new_parts: Vec<&str> = Vec::with_capacity(parts.len());
+    
+            for part in parts {
+                match part {
+                    ".." => {
+                        if !new_parts.is_empty() {
+                            new_parts.pop();
+                        }
+                    }
+                    "." => {}
+                    _ => {
+                        if !(part.is_empty() && new_parts.is_empty()) {
+                            new_parts.push(part);
+                        }
+                    }
+                }
+            }
+    
+            if new_parts.is_empty() {
+                path = "/".to_string();
+            } else {
+                path = new_parts.join("/");
+            }
+        }
+    
+        if path.is_empty() {
+            path = "/".to_string();
+        }
+    
         Ok(Name {
             id,
             files: vec![File {
-                filename: path.to_string(),
+                filename: path.clone(),
                 longname: "".to_string(),
                 attrs: FileAttributes::default(),
             }],
         })
     }
+        
+
+   
 }
 
 fn loadpubkey(path: String) -> KeyPair {
