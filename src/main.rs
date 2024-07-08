@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::format;
 use std::io::{Read, Write};
 use std::{fs, path};
 use std::net::SocketAddr;
@@ -17,7 +18,7 @@ use sea_orm::{Database, DatabaseConnection, EntityTrait, QueryFilter};
 use sea_orm::entity::ColumnTrait;
 
 use myent::sftp::Entity as SftpEntity;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 
 
@@ -230,13 +231,15 @@ impl russh_sftp::server::Handler for SftpSession {
         info!("read: {}", handle);
         println!("len: {len}");
         println!("off: {offset}");
-
-            self.test = true;
-            let mut buf: [u8; 1024] = [0; 1024];
-            let mut file = std::fs::File::open("./mountpoints/u1/haha/tehe.txt")
+        let mount = self.mountpoint
+        .clone()
+        .unwrap();
+        let path = format!("./{}{}",mount,handle);
+            let mut buf: [u8; 1024] = [0;1024];
+            let mut file = tokio::fs::File::open(path)
+            .await
             .unwrap();
-            let res = file.read(&mut buf)
-            .unwrap();
+            let res = file.read(&mut buf).await.unwrap();
 
             println!("{res}");
             println!("{buf:?}");
@@ -244,7 +247,28 @@ impl russh_sftp::server::Handler for SftpSession {
 
     }
 
-    async 
+    async fn readlink(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {
+        info!("readlink {}", path);
+        Err(self.unimplemented())
+    }
+    ///iMovie.app/Contents/Frameworks/ProAppsFxSupport.framework/Modules
+
+    async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
+
+        let mountpoint = self.mountpoint.clone()
+        .unwrap();
+        let path = format!("./{}{}", mountpoint, filename);
+        let _ = tokio::fs::remove_file(path)
+        .await
+        .unwrap();
+
+        Ok(Status {
+            id,
+            status_code: StatusCode::Ok,
+            error_message: "Ok".to_string(),
+            language_tag: "en-UK".to_string(),
+        })
+    }
 
     async fn write(
         &mut self,
@@ -254,10 +278,17 @@ impl russh_sftp::server::Handler for SftpSession {
         data: Vec<u8>,
     ) -> Result<Status, Self::Error> {
         info!("write: {}", handle);
+        info!("offset: {}", offset);
+        info!("data:{:?}", data);
+
+        let mount = self.mountpoint.clone().unwrap();
+        let path = format!("./{}{}", mount, handle);
+
         //test
-        let mut file = tokio::fs::File::create("./mountpoints/u1/write.txt")
+        let mut file = tokio::fs::File::create(path)
         .await
         .unwrap();
+       
         //test over
         let res = file.write_all(&data)
         .await
@@ -400,13 +431,13 @@ impl russh_sftp::server::Handler for SftpSession {
         })
     }
 
-    async fn remove(&mut self, id: u32, filename: String) -> Result<Status, Self::Error> {
-        Err(self.unimplemented())
-    }
-
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
         info!("fstat: {}", handle);
-        let file = std::fs::File::open("./mountpoints/u1/haha/tehe.txt")
+
+        let mountpoint = self.mountpoint.clone().unwrap();
+        let path = format!("./{}{}", mountpoint, handle);
+
+        let file = std::fs::File::open(path)
         .unwrap();
 
         let metadata = file
